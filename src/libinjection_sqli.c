@@ -677,6 +677,11 @@ static size_t parse_string_core(const char *cs, const size_t len, size_t pos,
             continue;
         } else if (is_double_delim_escaped(qpos, cs + len)) {
             /* keep going, move ahead two characters */
+			//判断前面一个是否是引号， 如果是则跳过， 偶数个继续向前查找
+			//连续偶数个引号跳过，'rose''bbbb'实际sql认为的字符串是 rose''bbb
+			//such as : 
+			//'rose''bbbb' => rose''bbbb
+			//'rose''''bbbb' => rose''''bbbb
             qpos = (const char *) memchr((const void *) (qpos + 2), delim, (size_t)((cs + len) - (qpos + 2)));
             continue;
         } else {
