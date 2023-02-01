@@ -604,6 +604,7 @@ static size_t parse_operator2(struct libinjection_sqli_state * sf)
  *       " \\"   "  two backslash = not escaped!
  *       "\\\"   "  three backslash = escaped!
  */
+//判断是否是转义字符
 static int is_backslash_escaped(const char* end, const char* start)
 {
     const char* ptr;
@@ -613,8 +614,12 @@ static int is_backslash_escaped(const char* end, const char* start)
         }
     }
     /* if number of backslashes is odd, it is escaped */
+	//odd : 奇数
 
-    return (end - ptr) & 1;
+	// 1 & 1 => 0001 & 0001 = 1
+	// 2 & 1 => 0010 & 0001 = 0
+	// 3 & 1 => 0011 & 0001 = 1
+    return (end - ptr) & 1; 
 }
 
 static size_t is_double_delim_escaped(const char* cur,  const char* end)
@@ -661,25 +666,22 @@ static size_t parse_string_core(const char *cs, const size_t len, size_t pos,
              * string ended with no trailing quote
              * assign what we have
              */
-            st_assign(st, TYPE_STRING, pos + offset, len - pos - offset, cs + pos + offset);
+			//没有查到闭合引号 
+			st_assign(st, TYPE_STRING, pos + offset, len - pos - offset, cs + pos + offset);
             st->str_close = CHAR_NULL;
             return len;
-        } else if ( is_backslash_escaped(qpos - 1, cs + pos + offset)) {
+        } else if ( is_backslash_escaped(qpos - 1, cs + pos + offset)) {  //backslash \
             /* keep going, move ahead one character */
-            qpos =
-                (const char *) memchr((const void *) (qpos + 1), delim,
-                                      (size_t)((cs + len) - (qpos + 1)));
+			//如果当前引号是转义字符，不认为是闭合引号，继续向前查找 =>  "xxx\"yyyy"中间的\"不是闭合的引号
+			qpos = (const char *) memchr((const void *) (qpos + 1), delim, (size_t)((cs + len) - (qpos + 1)));
             continue;
         } else if (is_double_delim_escaped(qpos, cs + len)) {
             /* keep going, move ahead two characters */
-            qpos =
-                (const char *) memchr((const void *) (qpos + 2), delim,
-                                      (size_t)((cs + len) - (qpos + 2)));
+            qpos = (const char *) memchr((const void *) (qpos + 2), delim, (size_t)((cs + len) - (qpos + 2)));
             continue;
         } else {
             /* hey it's a normal string */
-            st_assign(st, TYPE_STRING, pos + offset,
-                      (size_t)(qpos - (cs + pos + offset)), cs + pos + offset);
+            st_assign(st, TYPE_STRING, pos + offset, (size_t)(qpos - (cs + pos + offset)), cs + pos + offset);
             st->str_close = delim;
             return (size_t)(qpos - cs + 1);
         }
@@ -1222,7 +1224,9 @@ int libinjection_sqli_tokenize(struct libinjection_sqli_state * sf)
      *  and in single-quote or double quote mode
      *  then pretend the input starts with a quote
      */
-    if (*pos == 0 && (sf->flags & (FLAG_QUOTE_SINGLE | FLAG_QUOTE_DOUBLE))) {
+	//单引号或双引号模式，假想input以引号开头
+	//没有闭合 ’或“也按字符串处理 -1’ 转换为特征码s（string）； 
+	if (*pos == 0 && (sf->flags & (FLAG_QUOTE_SINGLE | FLAG_QUOTE_DOUBLE))) {
         *pos = parse_string_core(s, slen, 0, current, flag2delim(sf->flags), 0);
         sf->stats_tokens += 1;
         return TRUE;
@@ -1381,17 +1385,18 @@ int libinjection_sqli_fold(struct libinjection_sqli_state * sf)
 
     int more = 1;
 
-    st_clear(&last_comment);
+    st_clear(&last_comment); //memset token_t
 
     /* Skip all initial comments, right-parens ( and unary operators
      *
      */
-    sf->current = &(sf->tokenvec[0]);
+	//跳过所有初始注释、右括号 ( 和一元运算符 
+	sf->current = &(sf->tokenvec[0]);
     while (more) {
         more = libinjection_sqli_tokenize(sf);
-        if ( ! (sf->current->type == TYPE_COMMENT ||
-                sf->current->type == TYPE_LEFTPARENS ||
-                sf->current->type == TYPE_SQLTYPE ||
+        if ( ! (sf->current->type == TYPE_COMMENT || //注释
+                sf->current->type == TYPE_LEFTPARENS || //左括号)
+                sf->current->type == TYPE_SQLTYPE || // TODO: SQLTYPE ?
                 st_is_unary_op(sf->current))) {
             break;
         }
@@ -1898,15 +1903,23 @@ int libinjection_sqli_fold(struct libinjection_sqli_state * sf)
  *          double quote.
  *
  */
+
+// flags: 
+// FLAG_QUOTE_NONE + ANSI
+// FLAG_QUOTE_NONE + MYSQL
+// FLAG_QUOTE_SINGLE + ANSI
+// FLAG_QUOTE_NONE + MYSQL
 const char* libinjection_sqli_fingerprint(struct libinjection_sqli_state * sql_state, int flags)
 {
     int i;
     int tlen = 0;
 
-    libinjection_sqli_reset(sql_state, flags);
+    libinjection_sqli_reset(sql_state, flags);  //reinit
 
+	//核心处理逻辑： 词法分析
     tlen = libinjection_sqli_fold(sql_state);
 
+	//backquote `
     /* Check for magic PHP backquote comment
      * If:
      * * last token is of type "bareword"
@@ -2257,11 +2270,13 @@ int libinjection_is_sqli(struct libinjection_sqli_state * sql_state)
     /*
      * test input "as-is"
      */
-    libinjection_sqli_fingerprint(sql_state, FLAG_QUOTE_NONE | FLAG_SQL_ANSI);
-    if (sql_state->lookup(sql_state, LOOKUP_FINGERPRINT,
+	// FLAG_QUOTE_NONE + SQL_ANSI 
+	libinjection_sqli_fingerprint(sql_state, FLAG_QUOTE_NONE | FLAG_SQL_ANSI);
+	if (sql_state->lookup(sql_state, LOOKUP_FINGERPRINT,
                           sql_state->fingerprint, strlen(sql_state->fingerprint))) {
         return TRUE;
-    } else if (reparse_as_mysql(sql_state)) {
+    } else if (reparse_as_mysql(sql_state)) { 
+		// FLAG_QUOTE_NONE + MYSQL
         libinjection_sqli_fingerprint(sql_state, FLAG_QUOTE_NONE | FLAG_SQL_MYSQL);
         if (sql_state->lookup(sql_state, LOOKUP_FINGERPRINT,
                               sql_state->fingerprint, strlen(sql_state->fingerprint))) {
@@ -2278,7 +2293,8 @@ int libinjection_is_sqli(struct libinjection_sqli_state * sql_state)
      *   is_string_sqli(sql_state, "'" + s, slen+1, NULL, fn, arg)
      *
      */
-    if (memchr(s, CHAR_SINGLE, slen)) {
+	// FLAG_QUOTE_SINGLE + SQL_ANSI 
+	if (memchr(s, CHAR_SINGLE, slen)) {
         libinjection_sqli_fingerprint(sql_state, FLAG_QUOTE_SINGLE | FLAG_SQL_ANSI);
         if (sql_state->lookup(sql_state, LOOKUP_FINGERPRINT,
                               sql_state->fingerprint, strlen(sql_state->fingerprint))) {
@@ -2292,6 +2308,7 @@ int libinjection_is_sqli(struct libinjection_sqli_state * sql_state)
         }
     }
 
+	// FLAG_QUOTE_DOUBLE + MYSQL 
     /*
      * same as above but with a double-quote "
      */
