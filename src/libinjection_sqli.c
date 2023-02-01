@@ -622,6 +622,7 @@ static int is_backslash_escaped(const char* end, const char* start)
     return (end - ptr) & 1; 
 }
 
+//检查下一个字符是否和当前字符相同
 static size_t is_double_delim_escaped(const char* cur,  const char* end)
 {
     return  ((cur + 1) < end) && *(cur+1) == *cur;
@@ -677,7 +678,8 @@ static size_t parse_string_core(const char *cs, const size_t len, size_t pos,
             continue;
         } else if (is_double_delim_escaped(qpos, cs + len)) {
             /* keep going, move ahead two characters */
-			//判断前面一个是否是引号， 如果是则跳过， 偶数个继续向前查找
+			//偶数个字符引号不认为是闭合引号
+			//判断下一个字符是否是引号， 如果是则跳过2个字符， 继续向前查找
 			//连续偶数个引号跳过，'rose''bbbb'实际sql认为的字符串是 rose''bbb
 			//such as : 
 			//'rose''bbbb' => rose''bbbb
